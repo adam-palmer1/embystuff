@@ -4,16 +4,6 @@
 # Author: Adam Palmer <adam@adampalmer.me>
 # Credit: https://github.com/faush01/EmbyToolbox/blob/master/WatchedStatusBackup
 
-#config.json should look like:
-#{
-#    "emby_url":, "http://your.emby.url:8096",
-#    "sync_users": [
-#        {"username": "USER1", "password": "PASSWORD1"},
-#        {"username": "USER2", "password": "PASSWORD2"}
-#    ],
-#   "playlist_name": "Watching Together"
-#}
-
 #EDIT config_file VARIABLE BELOW!
 config_file="/home/adam/code/emby/config.json"
 
@@ -23,6 +13,7 @@ import requests
 import hashlib
 from urllib.parse import quote
 from datetime import datetime
+import db
 
 def do_log(l):
     now = datetime.now()
@@ -34,7 +25,7 @@ def error(msg):
 
 def get_headers(auth_user=None):
     headers = {}
-    auth_string = "MediaBrowser Client=\"EmbyBackup\",Device=\"BackupClient\",DeviceId=\"10\",Version=\"1\""
+    auth_string = "MediaBrowser Client=\"EmbyWatchedSync\",Device=\"WatchedSync\",DeviceId=\"10\",Version=\"1\""
     if auth_user is not None:
         auth_string += ",UserId=\"" + auth_user['user_id'] + "\""
         headers["X-MediaBrowser-Token"] = auth_user["access_token"]
@@ -82,17 +73,20 @@ def get_watched_list(base_url, auth_user):
     response = requests.get(url, headers=get_headers(auth_user))
     return response.json()
 
-def set_watched_list(base_url, auth_user, sync_played, sync_ticks):
+def set_watched_list(base_url, auth_user, sync_played, sync_ticks, con):
     posts = []
+    #db.set(user_id, item_id, played, playbackpositionticks)
     for s in sync_played: #(Id, Played, PlaybackPositionTicks)
         url = base_url + "/emby/Users/" + auth_user['user_id'] + "/PlayedItems/" + s[0]
         data = {"Played": s[1], "PlaybackPositionTicks": s[2]}
         requests.post(url, headers=get_headers(auth_user), json=data)
+        db.set(con, auth_user['user_id'], s[0], s[1], s[2])
         posts.append( (url, data) )
     for s in sync_ticks: #(Id, Played, PlaybackPositionTicks)
         url = base_url + "/emby/Sessions/Playing/Progress"
         data = {"PositionTicks": s[2],"ItemId": s[0],"EventName":"timeupdate"}
         requests.post(url, headers=get_headers(auth_user), json=data)
+        db.set(con, auth_user['user_id'], s[0], s[1], s[2])
         posts.append( (url, data) )
     return posts
 
@@ -100,6 +94,10 @@ def set_watched_list(base_url, auth_user, sync_played, sync_ticks):
 #Load the config
 with open(config_file, "r") as cf:
     config = json.load(cf)
+
+
+#Connect to the database
+con = db.connect(config['db'])
 
 auths = []
 #Authenticate each user and get an AccessToken back from the server
@@ -153,5 +151,6 @@ for user_id in user_watched_list:
                             to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item]) #add to other user's sync list
 #Now sync to_sync.
 for user in to_sync:
-    posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_ticks'])
+    posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_ticks'], con)
     do_log(posts)
+db.save()
