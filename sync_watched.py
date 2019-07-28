@@ -22,10 +22,13 @@ import json
 import requests
 import hashlib
 from urllib.parse import quote
-from pprint import pprint
+
+def do_log(l):
+    now = datetime.now()
+    print("[%s] %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), l))
 
 def error(msg):
-    print(msg)
+    do_log(msg)
     quit()
 
 def get_headers(auth_user=None):
@@ -150,4 +153,4 @@ for user_id in user_watched_list:
 #Now sync to_sync.
 for user in to_sync:
     posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_ticks'])
-    pprint(posts)
+    do_log(posts)
