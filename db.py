@@ -30,7 +30,7 @@ def set(con, user_id, item_id, played, playbackpositionticks):
 
 def get(con, item_id, user_id=None):
     cur = con.cursor()
-    sql = "SELECT UserId, Played, PlaybackPositionTicks FROM watched_history WHERE ItemId = " + str(item_id) + "
+    sql = "SELECT UserId, Played, PlaybackPositionTicks FROM watched_history WHERE ItemId = " + str(item_id)
     if user_id is not None:
         sql += " AND user_id ='" + str(user_id) + "'"
     res = cur.execute(sql)

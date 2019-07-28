@@ -153,4 +153,4 @@ for user_id in user_watched_list:
 for user in to_sync:
     posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_ticks'], con)
     do_log(posts)
-db.save()
+db.save(con)
