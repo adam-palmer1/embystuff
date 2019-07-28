@@ -22,6 +22,7 @@ import json
 import requests
 import hashlib
 from urllib.parse import quote
+from datetime import datetime
 
 def do_log(l):
     now = datetime.now()
