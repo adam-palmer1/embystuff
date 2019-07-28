@@ -70,7 +70,6 @@ def get_playlist_items(base_url, auth_user, playlist_id):
     response = requests.get(url, headers=get_headers(auth_user))
     playlistItemIDs = []
     for item in response.json()['Items']:
-        pprint(item)
         playlistItemIDs.append(item['Id'])
     return playlistItemIDs
 
