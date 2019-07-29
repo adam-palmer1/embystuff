@@ -14,7 +14,6 @@ import hashlib
 from urllib.parse import quote
 from datetime import datetime
 import db
-from pprint import pprint
 
 def do_log(l):
     now = datetime.now()
@@ -206,7 +205,6 @@ for auth_user in auths:
 
 
 to_sync = calculate_sync_list(user_watched_list, playlistItemIDs, con)
-pprint(to_sync)
 #Now sync to_sync.
 for user in to_sync:
     posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_unplayed'], to_sync[user]['sync_ticks'], con)
