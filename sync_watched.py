@@ -109,10 +109,8 @@ def set_watched_list(base_url, auth_user, sync_played, sync_unplayed, sync_ticks
     for s in sync_unplayed:
         (url, data) =_watched_list_unplayed(base_url, auth_user, s[0], s[1], s[2])
         posts.append( (url, data) )
-        print(url)
         (url, data) =_watched_list_ticks(base_url, auth_user, s[0], s[1], s[2])
         posts.append( (url, data) )
-        print(url)
         db.set(con, auth_user['user_id'], s[0], 'False', s[2])
     db.save(con)
     return posts
@@ -208,5 +206,6 @@ to_sync = calculate_sync_list(user_watched_list, playlistItemIDs, con)
 #Now sync to_sync.
 for user in to_sync:
     posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_unplayed'], to_sync[user]['sync_ticks'], con)
-    do_log(posts)
+    if posts != []:
+        do_log(posts)
 db.save(con)
