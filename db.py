@@ -34,7 +34,13 @@ def get(con, item_id, user_id=None):
     if user_id is not None:
         sql += " AND user_id ='" + str(user_id) + "'"
     res = cur.execute(sql)
-    return cur.fetchone()
+    return cur.fetchone() #(UserId, Played, PlaybackPositionTicks)
+
+def get_all(con):
+    cur = con.cursor()
+    sql = "SELECT ItemId FROM watched_history;"
+    res = cur.execute(sql)
+    return [str(i[0]) for i in cur.fetchall()]
 
 def save(con):
     con.commit()
