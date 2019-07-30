@@ -9,7 +9,7 @@ def connect(db_file):
         watched_history_sql = """
         CREATE TABLE watched_history (
             id integer PRIMARY KEY,
-            ItemId integer NOT NULL,
+            ItemId unsigned long long NOT NULL,
             UserId varchar NOT NULL,
             Played varchar NOT NULL,
             PlaybackPositionTicks integer NOT NULL,

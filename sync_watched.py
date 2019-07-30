@@ -14,6 +14,7 @@ import hashlib
 from urllib.parse import quote
 from datetime import datetime
 import db
+from pprint import pprint
 
 def do_log(l):
     now = datetime.now()
@@ -53,9 +54,6 @@ def get_playlist_id(base_url, auth_user, playlist_name):
     response = requests.get(url, headers=get_headers(auth_user))
     for item in response.json()['Items']:
         if item['CollectionType'] == 'playlists':
-            #foreach item['Id'] which is a playlist ID:
-            #url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Items/" + item['Id']
-            #response = requests.get(url, headers=get_headers(auth_user))
             #Is this the playlist we're looking for?
             url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Items" + "?SortBy=IsFolder%2CSortName&SortOrder=Ascending&Fields=BasicSyncInfo%2CPrimaryImageAspectRatio%2CProductionYear%2CStatus%2CEndDate&ImageTypeLimit=1&EnableImageTypes=Primary%2CBackdrop%2CThumb&StartIndex=0&ParentId=" + item['Id']
             response = requests.get(url, headers=get_headers(auth_user))
@@ -90,28 +88,31 @@ def _watched_list_unplayed(base_url, auth_user, item, played, ticks):
     return (url, data)
 
 def _watched_list_ticks(base_url, auth_user, item, played, ticks):
-    url = base_url + "/emby/Sessions/Playing/Progress"
-    data = {"PositionTicks": ticks,"ItemId": item,"EventName":"timeupdate"}
-    requests.post(url, headers=get_headers(auth_user), json=data)
+    url = base_url + "/emby/Users/" + auth_user['user_id'] + "/PlayingItems/" + item
+    data = {"PositionTicks": ticks}
+    requests.delete(url, headers=get_headers(auth_user), json=data)
     return (url, data)
 
-def set_watched_list(base_url, auth_user, sync_played, sync_unplayed, sync_ticks, con):
+def set_watched_list(base_url, auth_user, con):
     posts = []
-    #db.set(user_id, item_id, played, playbackpositionticks)
-    for s in sync_played: #(Id, Played, PlaybackPositionTicks)
-        (url, data) =_watched_list_played(base_url, auth_user, s[0], s[1], s[2])
-        db.set(con, auth_user['user_id'], s[0], s[1], s[2])
-        posts.append( (url, data) )
-    for s in sync_ticks: #(Id, Played, PlaybackPositionTicks)
-        (url, data) =_watched_list_ticks(base_url, auth_user, s[0], s[1], s[2])
-        db.set(con, auth_user['user_id'], s[0], s[1], s[2])
-        posts.append( (url, data) )
-    for s in sync_unplayed:
-        (url, data) =_watched_list_unplayed(base_url, auth_user, s[0], s[1], s[2])
-        posts.append( (url, data) )
-        (url, data) =_watched_list_ticks(base_url, auth_user, s[0], s[1], s[2])
-        posts.append( (url, data) )
-        db.set(con, auth_user['user_id'], s[0], 'False', s[2])
+    #this was refactored and became a bit of a mess. s[0] is itemid, s[1] is true/false for watched and s[2] is ticks.
+    #the return of the _function (url, data) is added to (s[3], post_type) for logging purposes. s[3] is a debug value
+    #that was added in the calculate_sync_list function to determine where/why an item was added.
+
+    seen_items = []
+    for post_type in ['sync_played', 'sync_unplayed', 'sync_ticks']:
+        for s in auth_user[post_type]:
+            if s[0] in seen_items: #Don't allow dups
+                break
+            seen_items.append(s[0])
+            if post_type == 'sync_played':
+                posts.append( _watched_list_played(base_url, auth_user, s[0], s[1], s[2]) + (auth_user['user_id'], s[3], post_type) )
+            elif post_type == 'sync_ticks':
+                posts.append( _watched_list_ticks(base_url, auth_user, s[0], s[1], s[2]) + (auth_user['user_id'], s[3], post_type) )
+            elif post_type == 'sync_unplayed':
+                posts.append( _watched_list_unplayed(base_url, auth_user, s[0], s[1], s[2]) + (auth_user['user_id'], s[3], post_type) )
+                posts.append( _watched_list_ticks(base_url, auth_user, s[0], s[1], s[2]) + (auth_user['user_id'], s[3], post_type) )
+            db.set(con, auth_user['user_id'], s[0], s[1], s[2])
     db.save(con)
     return posts
 
@@ -133,45 +134,70 @@ def calculate_sync_list(user_watched_list, playlistItemIDs, con):
             #for each item in user_id's list:
             for item in user_watched_list[user_id]:
                 in_db = False
+                item_added = False
                 if item in db_seen: #We've seen this item before in the DB, we'll have to use default rules:
                     #if we get here, item will always be in all users watch lists
                     (db_user_id, db_watched, db_ticks) = db.get(con, item) #we've seen this item before, so different rules apply:
                     in_db = True
-
                 if item not in user_watched_list[other_user_id]: #if the item is not in the other user's list then:
                     if in_db is True and str2bool(db_watched) is True:
                         #it's watched in the DB. It's watched on our list, but not on the other users. So other user has unwatched it.
-                        to_sync[user_id]['sync_unplayed'].append((item,) + user_watched_list[user_id][item])
+                        to_sync[user_id]['sync_unplayed'].append((item,) + user_watched_list[user_id][item] + (1,))
+                        item_added = True
                     elif user_watched_list[user_id][item][0] is True: #we finished it
-                        to_sync[other_user_id]['sync_played'].append((item,) + user_watched_list[user_id][item]) #add to other user's sync list
+                        to_sync[other_user_id]['sync_played'].append((item,) + user_watched_list[user_id][item] + (8,)) #add to other user's sync list
+                        item_added = True
                     else:
                         if int(user_watched_list[user_id][item][1]) > 0: #ticks > 0. we didn't finish it
-                            to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item]) #add to other user's sync list
+                            to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item] + (2,)) #add to other user's sync list
+                            item_added = True
                 else: #if it is, then:
                     if item in db_seen: #If it's in the DB, e.g. we've seen it and synced it before
                         #if anyone has different to what's synced and in the DB, then defer to them
                         if str2bool(user_watched_list[other_user_id][item][0]) is not str2bool(db_watched):
                             if str2bool(user_watched_list[other_user_id][item][0]) is False:
                                 #DB says it's watched, other user says it isn't. Trust other user
-                                to_sync[user_id]['sync_unplayed'].append((item,) + user_watched_list[other_user_id][item]) #this syncs ticks too
+                                to_sync[user_id]['sync_unplayed'].append((item,) + user_watched_list[other_user_id][item] + (3,)) #this syncs ticks too
+                                item_added = True
                             else: #DB says it's unwatched, user says it's watched
-                                to_sync[user_id]['sync_played'].append((item,) + user_watched_list[other_user_id][item])
-                        if user_watched_list[other_user_id][item][1] != db_ticks: #if users disagree over ticks.
-                            to_sync[user_id]['sync_ticks'].append((item,) + user_watched_list[other_user_id][item]) #sync from the disagreeing user
+                                to_sync[user_id]['sync_played'].append((item,) + user_watched_list[other_user_id][item] + (4,))
+                                item_added = True
+                        if user_watched_list[other_user_id][item][1] != user_watched_list[user_id][item][1]: #if users disagree over ticks.
+                            #Go with whoever doesn't agree with the DB
+                            if user_watched_list[other_user_id][item][1] == db_ticks:
+                                to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item] + (5,)) #sync from the disagreeing user
+                                item_added = True
+                            elif user_watched_list[user_id][item][1] == db_ticks:
+                                to_sync[user_id]['sync_ticks'].append((item,) + user_watched_list[other_user_id][item] + (9,)) #sync from the disagreeing user
+                                item_added = True
+                            else: #everyone disagrees, DB included. Go with whichever is greater. 
+                                if int(user_watched_list[user_id][item][1]) > int(user_watched_list[other_user_id][item][1]):
+                                    to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item] + (10,))
+                                    item_added = True
+                                else:
+                                    to_sync[user_id]['sync_ticks'].append((item,) + user_watched_list[other_user_id][item] + (11,))
+                                    item_added = True
                     else:
                         if user_watched_list[other_user_id][item][0] is False: #if other_user_id did not finish it
                             if user_watched_list[user_id][item][0] is True: #if user did finish it
-                                to_sync[other_user_id]['sync_played'].append((item,) + user_watched_list[user_id][item]) #add to other user's sync list
+                                to_sync[other_user_id]['sync_played'].append((item,) + user_watched_list[user_id][item] + (6,)) #add to other user's sync list
+                                item_added = True
                             else: #neither user finished it
                                 if int(user_watched_list[user_id][item][1]) > int(user_watched_list[other_user_id][item][1]): #If user is further ahead in the item than other user
-                                    to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item]) #add to other user's sync list
+                                    to_sync[other_user_id]['sync_ticks'].append((item,) + user_watched_list[user_id][item] + (7,)) #add to other user's sync list
+                                    item_added = True
+                #end of `for item`
+                if item_added is False: #This item isn't being synced as it's already synced between users
+                    if item not in db_seen: #This item isn't in the database either
+                        #db.set(con, user_id, item_id, played, playbackpositionticks):
+                        db.set(con, user_id, item, str(user_watched_list[user_id][item][0]), user_watched_list[other_user_id][item][1])
+                        db_seen.append(item)
     return to_sync
 
 #Main code block
 #Load the config
 with open(config_file, "r") as cf:
     config = json.load(cf)
-
 
 #Connect to the database
 con = db.connect(config['db'])
@@ -188,7 +214,6 @@ if playlistId is None:
     error("Couldn't find playlist")
 playlistItemIDs = get_playlist_items(config['emby_url'], auths[0], playlistId)
 
-
 #Next, get the user's watched/watching list:
 user_watched_list = {}
 for auth_user in auths:
@@ -201,11 +226,11 @@ for auth_user in auths:
             if item['UserData']['Played'] is True:
                 user_watched_list[auth_user['user_id']].update( {item['Id']: (item['UserData']['Played'], item['UserData']['PlaybackPositionTicks'])} )
 
-
 to_sync = calculate_sync_list(user_watched_list, playlistItemIDs, con)
+
 #Now sync to_sync.
 for user in to_sync:
-    posts = set_watched_list(config['emby_url'], to_sync[user], to_sync[user]['sync_played'], to_sync[user]['sync_unplayed'], to_sync[user]['sync_ticks'], con)
+    posts = set_watched_list(config['emby_url'], to_sync[user], con)
     if posts != []:
         do_log(posts)
 db.save(con)
