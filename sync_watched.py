@@ -49,26 +49,28 @@ def authenticate(base_url, username, password):
     response = requests.post(auth_url, data=message_data, headers=get_headers())
     return response.json()
 
-def get_playlist_id(base_url, auth_user, playlist_name):
-    url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Views"
+def get_collection_id(base_url, auth_user, collection_name):
+    url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Items"
     response = requests.get(url, headers=get_headers(auth_user))
     for item in response.json()['Items']:
-        if item['CollectionType'] == 'playlists':
-            #Is this the playlist we're looking for?
+        if item['Name'] == 'Collections':
+            #Is this the collection we're looking for?
             url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Items" + "?SortBy=IsFolder%2CSortName&SortOrder=Ascending&Fields=BasicSyncInfo%2CPrimaryImageAspectRatio%2CProductionYear%2CStatus%2CEndDate&ImageTypeLimit=1&EnableImageTypes=Primary%2CBackdrop%2CThumb&StartIndex=0&ParentId=" + item['Id']
             response = requests.get(url, headers=get_headers(auth_user))
             for i in response.json()['Items']:
-                if i['Name'] == playlist_name:
+                if i['Name'] == collection_name:
                     return i['Id']
     return None
 
-def get_playlist_items(base_url, auth_user, playlist_id):
-    url = base_url + "/emby/Playlists/" + playlist_id + "/Items?Fields=PrimaryImageAspectRatio%2CUserData%2CProductionYear&EnableImageTypes=Primary%2CBackdrop%2CBanner%2CThumb&UserId=" + auth_user['user_id']
+def get_collection_items(base_url, auth_user, collection_id, collectionItemIDs):
+    url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Items?ParentId=" + collection_id + "&Fields=PrimaryImageAspectRatio%2CBasicSyncInfo%2CCanDelete%2CProductionYear%2CPremiereDate&EnableTotalRecordCount=false"
     response = requests.get(url, headers=get_headers(auth_user))
-    playlistItemIDs = []
     for item in response.json()['Items']:
-        playlistItemIDs.append(item['Id'])
-    return playlistItemIDs
+        if item['IsFolder'] is True:
+            #recurse with this new folder
+            get_collection_items(base_url, auth_user, item['Id'], collectionItemIDs)
+        else:
+            collectionItemIDs.append(item['Id'])
 
 def get_watched_list(base_url, auth_user):
     url = base_url + "/emby/Users/" + auth_user['user_id'] + "/Items" + "?Recursive=true&Fields=Path,ExternalUrls&IsMissing=False&IncludeItemTypes=Movie,Episode&ImageTypeLimit=0"
@@ -116,7 +118,7 @@ def set_watched_list(base_url, auth_user, con):
     db.save(con)
     return posts
 
-def calculate_sync_list(user_watched_list, playlistItemIDs, con):
+def calculate_sync_list(user_watched_list, collectionItemIDs, con):
     #Get a list of everyhting that the database has seen before
     db_seen = db.get_all(con)
 
@@ -208,11 +210,12 @@ for user in config['sync_users']:
     user_auth = authenticate(config['emby_url'], user['username'], user['password'])
     auths.append( {"username": user['username'], "access_token": user_auth['AccessToken'], "user_id": user_auth['User']['Id']} )
 
-#Using the first user, get a list of all playlists
-playlistId = get_playlist_id(config['emby_url'], auths[0], config['playlist_name'])
-if playlistId is None:
-    error("Couldn't find playlist")
-playlistItemIDs = get_playlist_items(config['emby_url'], auths[0], playlistId)
+#Using the first user, get a list of all collections
+collectionId = get_collection_id(config['emby_url'], auths[0], config['collection_name'])
+if collectionId is None:
+    error("Couldn't find collection")
+collectionItemIDs = []
+get_collection_items(config['emby_url'], auths[0], collectionId, collectionItemIDs)
 
 #Next, get the user's watched/watching list:
 user_watched_list = {}
@@ -220,13 +223,13 @@ for auth_user in auths:
     user_watched_list.update({auth_user['user_id'] : {}})
     watched_list = get_watched_list(config['emby_url'], auth_user)
     for item in watched_list['Items']: #Is this something we're watching together?
-        if item['Id'] in playlistItemIDs:
+        if item['Id'] in collectionItemIDs:
             if item['UserData']['Played'] is False and item['UserData']['PlaybackPositionTicks'] is not 0:
                 user_watched_list[auth_user['user_id']].update( {item['Id']: (item['UserData']['Played'], item['UserData']['PlaybackPositionTicks'])} )
             if item['UserData']['Played'] is True:
                 user_watched_list[auth_user['user_id']].update( {item['Id']: (item['UserData']['Played'], item['UserData']['PlaybackPositionTicks'])} )
 
-to_sync = calculate_sync_list(user_watched_list, playlistItemIDs, con)
+to_sync = calculate_sync_list(user_watched_list, collectionItemIDs, con)
 
 #Now sync to_sync.
 for user in to_sync:

@@ -12,7 +12,7 @@ config.json should look like:
         {"username": "USER1", "password": "PASSWORD1"},
         {"username": "USER2", "password": "PASSWORD2"}
     ],
-   "playlist_name": "Watching Together"
+   "collection_name": "Watching Together"
    "db": "/path/to/database.db"
 }
 ```
